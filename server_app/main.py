@@ -6,9 +6,10 @@ from dotenv import load_dotenv
 from typing import Dict
 import uvicorn
 from contextlib import asynccontextmanager
+from langchain.schema import HumanMessage
 
 from ..shared.models import ChatMessage, ChatResponse, OnboardingState
-from .workflow import OnboardingWorkflow
+from .workflow import OnboardingWorkflow, WorkflowState
 
 # Load environment variables
 load_dotenv()
@@ -18,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Store session states (in production, use Redis or database)
-session_states: Dict[str, OnboardingState] = {}
+session_states: Dict[str, WorkflowState] = {}
 
 
 @asynccontextmanager
@@ -67,31 +68,41 @@ async def chat(message: ChatMessage, request: Request):
 
         # Get or create session state
         session_id = message.session_id or "default"
-        current_state = session_states.get(session_id, OnboardingState())
+        current_state = session_states.get(
+            session_id,
+            {"messages": [], "onboarding_state": OnboardingState()}
+        )
+
+        # Append the new message to the history
+        current_state["messages"].append(HumanMessage(content=message.message))
         
         # Process message through workflow
-        response, updated_state, completed = workflow.process_message(
-            message.message, current_state
-        )
+        response, updated_workflow_state = workflow.process_message(current_state)
         
         # Update session state
-        session_states[session_id] = updated_state
+        session_states[session_id] = updated_workflow_state
+
+        onboarding_state = updated_workflow_state["onboarding_state"]
+        completed = onboarding_state.step == "completed"
         
         return ChatResponse(
             response=response,
-            state=updated_state,
+            state=onboarding_state,
             completed=completed
         )
     
     except Exception as e:
-        logger.error(f"Error processing chat message: {e}")
+        logger.error(f"Error processing chat message: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/session/{session_id}/state", response_model=OnboardingState)
 async def get_session_state(session_id: str):
     """Get current session state"""
-    return session_states.get(session_id, OnboardingState())
+    workflow_state = session_states.get(session_id)
+    if workflow_state:
+        return workflow_state["onboarding_state"]
+    return OnboardingState()
 
 
 @app.delete("/session/{session_id}")

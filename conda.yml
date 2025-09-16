@@ -11,12 +11,10 @@ dependencies:
     - streamlit==1.49.1
     - langchain==0.3.27
     - langgraph==0.6.7
-    - openai==1.107.3
     - langchain-openai==0.3.33
-    - pydantic==2.11.9
     - python-dotenv==1.1.1
     - httpx==1.0.1
     - fastmcp==2.11
     - mcp==1.13.1
-    - typing-extensions==4.15.0
     - langchain-mcp-adapter==0.1.9
+    - pydantic==2.11.9
