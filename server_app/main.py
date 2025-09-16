@@ -1,10 +1,11 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 import os
 from dotenv import load_dotenv
 from typing import Dict
 import uvicorn
+from contextlib import asynccontextmanager
 
 from ..shared.models import ChatMessage, ChatResponse, OnboardingState
 from .workflow import OnboardingWorkflow
@@ -16,8 +17,31 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Store session states (in production, use Redis or database)
+session_states: Dict[str, OnboardingState] = {}
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Load the workflow on startup
+    logger.info("Starting up and initializing workflow...")
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
+        raise ValueError("OPENAI_API_KEY environment variable is required")
+
+    app.state.workflow = await OnboardingWorkflow.create(openai_api_key)
+    logger.info("Workflow initialized successfully.")
+
+    yield
+
+    # Clean up the workflow on shutdown
+    logger.info("Shutting down and closing workflow...")
+    await app.state.workflow.close()
+    logger.info("Workflow closed successfully.")
+
+
 # Initialize FastAPI app
-app = FastAPI(title="LLM Onboarding Server", version="1.0.0")
+app = FastAPI(title="LLM Onboarding Server", version="1.0.0", lifespan=lifespan)
 
 # Add CORS middleware
 app.add_middleware(
@@ -28,16 +52,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize workflow
-openai_api_key = os.getenv("OPENAI_API_KEY")
-if not openai_api_key:
-    raise ValueError("OPENAI_API_KEY environment variable is required")
-
-workflow = OnboardingWorkflow(openai_api_key)
-
-# Store session states (in production, use Redis or database)
-session_states: Dict[str, OnboardingState] = {}
-
 
 @app.get("/")
 async def root():
@@ -46,9 +60,11 @@ async def root():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(message: ChatMessage):
+async def chat(message: ChatMessage, request: Request):
     """Process chat message and return response"""
     try:
+        workflow: OnboardingWorkflow = request.app.state.workflow
+
         # Get or create session state
         session_id = message.session_id or "default"
         current_state = session_states.get(session_id, OnboardingState())
@@ -91,4 +107,4 @@ if __name__ == "__main__":
     port = int(os.getenv("SERVER_PORT", "8000"))
     
     logger.info(f"Starting server on {host}:{port}")
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run("server_app.main:app", host=host, port=port, reload=True)
