@@ -3,14 +3,19 @@ from typing import Dict, Any, List, Tuple
 from langchain.schema import BaseMessage, HumanMessage, AIMessage, BaseTool
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
+import os
+from dotenv import load_dotenv
 from langgraph.prebuilt import create_react_agent
 from typing_extensions import TypedDict
 import json
 import logging
 from ..shared.models import OnboardingState
 from langchain_mcp_adapters.tools import load_mcp_tools
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from mcp import ClientSession
+from mcp.client.http import http_client
+
+# Load environment variables
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +39,11 @@ class OnboardingWorkflow:
     @classmethod
     async def create(cls, openai_api_key: str) -> OnboardingWorkflow:
         """Create an instance of OnboardingWorkflow with async initialization."""
-        server_params = StdioServerParameters(
-            command="python",
-            args=["run_mcp_server.py"],
-            env=None
-        )
-        read, write = await stdio_client(server_params).__aenter__()
+        mcp_host = os.getenv("MCP_SERVER_HOST", "localhost")
+        mcp_port = int(os.getenv("MCP_SERVER_PORT", "8001"))
+        mcp_url = f"http://{mcp_host}:{mcp_port}/mcp"
+
+        read, write = await http_client(mcp_url).__aenter__()
         session = await ClientSession(read, write).__aenter__()
         await session.initialize()
         tools = await load_mcp_tools(session)
