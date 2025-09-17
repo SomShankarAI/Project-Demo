@@ -2,7 +2,6 @@
 """
 Script to run the MCP Tools Server
 """
-import asyncio
 import sys
 import os
 
@@ -13,4 +12,4 @@ from mcp_server.main import main
 
 if __name__ == "__main__":
     print("Starting MCP Tools Server...")
-    asyncio.run(main())
+    main()

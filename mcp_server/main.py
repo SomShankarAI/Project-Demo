@@ -64,10 +64,18 @@ def onboard_user(store_id: str, team_name: str, profile_name: str,
         selected_identities=selected_identities
     )
 
-async def main():
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+def main():
     """Run the FastMCP server"""
-    logger.info("Starting FastMCP Tools Server...")
-    await mcp.run(transport="stdio")
+    host = os.getenv("MCP_SERVER_HOST", "localhost")
+    port = int(os.getenv("MCP_SERVER_PORT", "8001"))
+    logger.info(f"Starting FastMCP Tools Server on {host}:{port}...")
+    mcp.run(transport="http", host=host, port=port)
 
 if __name__ == "__main__":
     asyncio.run(main())
