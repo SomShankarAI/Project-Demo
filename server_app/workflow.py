@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Dict, Any, List, Tuple
-from langchain.schema import BaseMessage, HumanMessage, AIMessage, BaseTool
+from langchain.schema import BaseMessage, HumanMessage, AIMessage
+from langchain_core.tools.base import BaseTool
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 import os
@@ -9,10 +10,10 @@ from langgraph.prebuilt import create_react_agent
 from typing_extensions import TypedDict
 import json
 import logging
-from ..shared.models import OnboardingState
+from .models import OnboardingState
 from langchain_mcp_adapters.tools import load_mcp_tools
 from mcp import ClientSession
-from mcp.client.http import http_client
+from mcp.client.streamable_http import streamablehttp_client
 
 # Load environment variables
 load_dotenv()
@@ -43,10 +44,10 @@ class OnboardingWorkflow:
         mcp_port = int(os.getenv("MCP_SERVER_PORT", "8001"))
         mcp_url = f"http://{mcp_host}:{mcp_port}/mcp"
 
-        read, write = await http_client(mcp_url).__aenter__()
-        session = await ClientSession(read, write).__aenter__()
-        await session.initialize()
-        tools = await load_mcp_tools(session)
+        async with streamablehttp_client(mcp_url) as (reader, writer, _):
+            async with ClientSession(reader, writer) as session:
+                await session.initialize()
+                tools = await load_mcp_tools(session)
         
         return cls(openai_api_key, tools, session)
 

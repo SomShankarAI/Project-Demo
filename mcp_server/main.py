@@ -70,12 +70,12 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-async def main():
+def main():
     """Run the FastMCP server"""
     host = os.getenv("MCP_SERVER_HOST", "localhost")
     port = int(os.getenv("MCP_SERVER_PORT", "8001"))
     logger.info(f"Starting FastMCP Tools Server on {host}:{port}...")
-    await mcp.run(transport="http", host=host, port=port)
+    mcp.run(transport="http", host=host, port=port)
 
 if __name__ == "__main__":
     asyncio.run(main())

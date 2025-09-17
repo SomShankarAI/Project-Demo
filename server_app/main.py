@@ -8,7 +8,7 @@ import uvicorn
 from contextlib import asynccontextmanager
 from langchain.schema import HumanMessage
 
-from ..shared.models import ChatMessage, ChatResponse, OnboardingState
+from .models import ChatMessage, ChatResponse, OnboardingState
 from .workflow import OnboardingWorkflow, WorkflowState
 
 # Load environment variables
