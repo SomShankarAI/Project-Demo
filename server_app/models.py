@@ -21,7 +21,7 @@ class OnboardingState(BaseModel):
     b2b_identities: Optional[List[str]] = None
     selected_profiles: Optional[List[str]] = None
     selected_identities: Optional[List[str]] = None
-    step: str = "initial"
+    step: str = "collect_store_id"
 
 
 class ChatMessage(BaseModel):

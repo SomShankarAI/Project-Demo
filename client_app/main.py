@@ -13,7 +13,7 @@ SERVER_URL = f"http://{os.getenv('SERVER_HOST', 'localhost')}:{os.getenv('SERVER
 
 # Page configuration
 st.set_page_config(
-    page_title="LLM Onboarding Assistant",
+    page_title="ACIS Onboarding Assistant",
     page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -168,7 +168,7 @@ def main():
     # Header
     st.markdown("""
     <div class="main-header">
-        <h1>🚀 LLM Onboarding Assistant</h1>
+        <h1>🚀 ACIS Onboarding Assistant</h1>
         <p>Your intelligent guide through the onboarding process</p>
     </div>
     """, unsafe_allow_html=True)
@@ -251,7 +251,7 @@ def main():
     if not st.session_state.messages:
         st.markdown("""
         <div class="chat-message assistant-message">
-            <strong>Assistant:</strong> Welcome to the LLM Onboarding Assistant! 👋<br><br>
+            <strong>Assistant:</strong> Welcome to the ACIS Onboarding Assistant! 👋<br><br>
             I'm here to help you through the onboarding process. To get started, I'll need your Store ID. 
             You can say something like "My store ID is ABC123" or just provide the ID directly.
         </div>

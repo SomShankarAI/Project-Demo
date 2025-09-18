@@ -15,7 +15,7 @@ from .workflow import OnboardingWorkflow, WorkflowState
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Store session states (in production, use Redis or database)
@@ -74,10 +74,10 @@ async def chat(message: ChatMessage, request: Request):
         )
 
         # Append the new message to the history
-        current_state["messages"].append(HumanMessage(content=message.message))
+        current_state["messages"].append(message.message)
         
         # Process message through workflow
-        response, updated_workflow_state = workflow.process_message(current_state)
+        response, updated_workflow_state = await workflow.process_message(current_state)
         
         # Update session state
         session_states[session_id] = updated_workflow_state

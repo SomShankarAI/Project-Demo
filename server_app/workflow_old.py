@@ -5,9 +5,9 @@ from langchain_core.tools.base import BaseTool
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 import os
-from langgraph.graph import StateGraph, END, START
+from langgraph.graph import StateGraph, END
 from dotenv import load_dotenv
-#from langchain.agents import AgentExecutor
+from langchain.agents import AgentExecutor
 from langgraph.prebuilt import create_react_agent
 from typing_extensions import TypedDict
 import json
@@ -16,10 +16,6 @@ from .models import OnboardingState
 from langchain_mcp_adapters.tools import load_mcp_tools
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
-from langgraph.graph.message import add_messages
-from typing import Annotated
-from .steps import StepsConstants
-import asyncio
 
 # Load environment variables
 load_dotenv()
@@ -27,20 +23,20 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 class WorkflowState(TypedDict):
-    messages: Annotated[list, add_messages]
+    messages: List[BaseMessage]
     onboarding_state: OnboardingState
+    agent_scratchpad: List[BaseMessage]
 
 class OnboardingWorkflow:
-    def __init__(self, openai_api_key: str, tools: List[BaseTool], session: ClientSession, mcp_url: str):
+    def __init__(self, openai_api_key: str, tools: List[BaseTool], session: ClientSession):
         self.llm = ChatOpenAI(
             model="gpt-3.5-turbo",
             temperature=0.1,
             openai_api_key=openai_api_key
         )
-        self.mcp_url = mcp_url
         self.tools = tools
         self.session = session
-        self.tools_executor = self._create_tools_executor()
+        self.agent_executor = self._create_agent()
         self.workflow = self._create_workflow()
 
     @classmethod
@@ -55,116 +51,42 @@ class OnboardingWorkflow:
                 await session.initialize()
                 tools = await load_mcp_tools(session)
         
-        return cls(openai_api_key, tools, session, mcp_url)
+        return cls(openai_api_key, tools, session)
 
-    def _create_tools_executor(self):
+    def _create_agent(self) -> AgentExecutor:
         """Create LangChain agent with MCP tools"""
         prompt = ChatPromptTemplate.from_messages([
             ("system", """
-             You are an intelligent onboarding assistant. Your goal is to help users complete their onboarding process using the available tools.
+             You are an intelligent onboarding assistant. Your goal is to help users complete their onboarding process by collecting the necessary information and using the available tools.
+             Your workflow should be:
+             1. First, collect the StoreID from the user
+             2. Use tool to fetch team and profile information
+             3. Use tool to fetch available B2B options
+             4. Help the user select their preferred B2B profiles and identities
+             5. Use tool to complete the onboarding process
+ 
+             Always be helpful, clear, and guide the user through each step. Don't assume information - ask the user when you need clarification.
              """)
         ])
-        return create_react_agent(model = self.llm, tools = self.tools, prompt = prompt, debug = True)
+        self.agent_graph = create_react_agent(model=self.llm,tools= self.tools, debug=True)
+        return AgentExecutor(agent = self.agent_graph, tools = self.tools, verbose = True)
     
     def _create_workflow(self) -> StateGraph:
         """Create the LangGraph workflow"""
         workflow = StateGraph(WorkflowState)
         
         # Add nodes
-        workflow.add_node(StepsConstants.COLLECT_STORE_ID, self._collect_store_id)
-        workflow.add_node(StepsConstants.FETCH_B2B_DATA, self._fetch_b2b_data, )
+        workflow.add_node("agent", self._run_agent)
+        workflow.add_node("update_state", self._update_state)
         
         # Set entry point
-        #workflow.set_entry_point(StepsConstants.COLLECT_STORE_ID)
-        routingDict = {
-            StepsConstants.COLLECT_STORE_ID: StepsConstants.COLLECT_STORE_ID,
-            StepsConstants.FETCH_B2B_DATA: StepsConstants.FETCH_B2B_DATA,
-            StepsConstants.END : END
-        }
-        workflow.add_conditional_edges(START, self._initial_router, routingDict)
-        workflow.add_conditional_edges(StepsConstants.COLLECT_STORE_ID, self._router, routingDict)
+        workflow.set_entry_point("agent")
         
-        workflow.add_edge(StepsConstants.FETCH_B2B_DATA, END)
+        # Add edges
+        workflow.add_edge("agent", "update_state")
+        workflow.add_edge("update_state", END)
         
         return workflow.compile()
-    
-    def _initial_router(self, state: WorkflowState):
-        onboarding_state = state["onboarding_state"]
-        if onboarding_state.step == StepsConstants.COLLECT_STORE_ID:
-            return StepsConstants.COLLECT_STORE_ID
-        if onboarding_state.step == StepsConstants.FETCH_B2B_DATA:
-            return StepsConstants.FETCH_B2B_DATA
-        logger.error(f"Invalid State: {state}")
-    
-    def _router(self, state: WorkflowState):
-        onboarding_state = state["onboarding_state"]
-        if onboarding_state.step == StepsConstants.COLLECT_STORE_ID:
-            return StepsConstants.END
-        if onboarding_state.step == StepsConstants.FETCH_B2B_DATA:
-            return StepsConstants.FETCH_B2B_DATA
-        logger.error(f"Invalid State: {state}")
-    
-    def _collect_store_id(self, state: WorkflowState):
-        onboarding_state = state["onboarding_state"]
-        if onboarding_state.step == StepsConstants.COLLECT_STORE_ID:
-            logger.info(f"Processing step: {onboarding_state.step}")
-            prompts = [("system","""
-                        You are a helpfull assistance to help onboarding a new user.                                   
-                        Try to get StoreId from the user message. If succesfully able to extract StoreId then return a json object with properties 'is_success':'true','storeid':'extracted store id'.
-                        if not able to find any StoreId then prompt the user to provide one. Do not assume any value, always ask the user for more information. Response should be a json object with properties 'is_success':'false','user_promt':'your ask to user'.
-                        """),
-                        ("human", state["messages"][-1].content)]
-        
-            try:
-                llm_response = self.llm.invoke(prompts)
-                logger.debug(f"LLM response: {llm_response.content}")
-                
-                response = json.loads(llm_response.content)
-                
-                if response["is_success"] == "true":
-                    onboarding_state.store_id = response["storeid"]
-                    onboarding_state.step = StepsConstants.FETCH_B2B_DATA
-                else:
-                    return {"messages": response["user_prompt"]}
-                
-            except (json.JSONDecodeError, Exception) as e:
-                logger.error(f"Error collecting StoreId: {e}", exc_info=True)
-                return {"messages": f"I apologize, but I encountered an error processing your request at step {onboarding_state.step}."}
-
-    async def _fetch_b2b_data(self, state: WorkflowState):
-        onboarding_state = state["onboarding_state"]
-        logger.info(f"Processing step: {onboarding_state.step}")
-        prompt = {"messages": [HumanMessage(content= f"""
-            Current state:
-            - StoreId: {onboarding_state.store_id}
-            - TeamName: {onboarding_state.team_name}
-            - ProfileName: {onboarding_state.profile_name}
-            - B2BProfiles: {onboarding_state.b2b_profiles}
-            - B2BIdentities: {onboarding_state.b2b_identities}
-            Based on StoreId populate TeamaName, ProfileName, B2BProfiles and B2BIdentities using Tools provided. Once done return a json object with properties store_id, team_name, profile_name, b2b_profiles and b2b_identities with the values fetched from Tools.
-        """)]}
-        try:
-            #loop = asyncio.get_event_loop()
-            #agent_response = loop.run_until_complete(self.tools_executor.ainvoke(prompt))
-            async with streamablehttp_client(self.mcp_url) as (reader, writer, _):
-                async with ClientSession(reader, writer) as session:
-                    await session.initialize()
-                    tools = await load_mcp_tools(session)
-                    tools_executor = create_react_agent(model=self.llm, tools=tools, debug=True)
-                    agent_response = await tools_executor.ainvoke(prompt)
-                    logger.debug(f"Agent response: {agent_response}")
-                
-                    #response = json.loads(agent_response.content)
-                
-            # if response["is_success"] == "true":
-            #     onboarding_state.store_id = response["storeid"]
-            #     onboarding_state.step = StepsConstants.FETCH_B2B_DATA
-            # else:
-            #     return {"messages": response["user_prompt"]}
-                
-        except (json.JSONDecodeError, Exception) as e:
-            logger.error(f"Error collecting B2B details: {e}", exc_info=True)
-            return {"messages": f"I apologize, but I encountered an error processing your request at step {onboarding_state.step}."}
 
     def _run_agent(self, state: WorkflowState) -> Dict[str, Any]:
         """Run the agent with current state"""
@@ -176,13 +98,10 @@ class OnboardingWorkflow:
         #     state["agent_scratchpad"] = [HumanMessage("")]
 
         # Prepare input for agent
-        # agent_input = {
-        #     "input": current_message,
-        #     "onboarding_state": onboarding_state.model_dump(),
-        #     "agent_scratchpad": []
-        # }
         agent_input = {
-            "messages": state["messages"]
+            "input": current_message,
+            "onboarding_state": onboarding_state.model_dump(),
+            "agent_scratchpad": []
         }
 
         #print(type(agent_input["agent_scratchpad"]))
@@ -191,17 +110,15 @@ class OnboardingWorkflow:
         try:
             # Run agent
             result = self.agent_graph.invoke(agent_input)
-            #print(result)
-            #response = result["output"]
+            response = result["output"]
             
             # Add AI response to messages
-            #state["messages"].append(AIMessage(content=response))
+            state["messages"].append(AIMessage(content=response))
             
             return {"messages": state["messages"]}
             
         except Exception as e:
-            logger.error(f"Error running agent: {e}", exc_info=True)
-            #traceback.print_exc()
+            logger.error(f"Error running agent: {e}")
             error_response = "I apologize, but I encountered an error processing your request. Please try again."
             state["messages"].append(AIMessage(content=error_response))
             return {"messages": state["messages"]}
@@ -276,7 +193,7 @@ class OnboardingWorkflow:
 
         return onboarding_state
 
-    async def process_message(self, current_state: WorkflowState) -> Tuple[str, WorkflowState]:
+    def process_message(self, current_state: WorkflowState) -> Tuple[str, WorkflowState]:
         """Process a user message and return response and updated state."""
 
         # initial_state = WorkflowState(
@@ -286,11 +203,11 @@ class OnboardingWorkflow:
         # )
         
         # Run the workflow
-        result = await self.workflow.ainvoke(current_state)
-
-        logger.debug(f"Workflow result: {result}")
+        result = self.workflow.invoke(current_state)
         
-        response = result["messages"][-1].content
+        # Extract the AI response
+        ai_messages = [msg for msg in result["messages"] if isinstance(msg, AIMessage)]
+        response = ai_messages[-1].content if ai_messages else "I'm sorry, I couldn't process your request."
         
         # Check if onboarding is completed
         #completed = result["onboarding_state"].step == "completed"
